@@ -28,24 +28,48 @@ export async function GET(request: Request, context: RouteContext) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      let lastPayload = "";
+
       const sendRoom = (nextRoom = room) => {
+        const payload = JSON.stringify({ room: nextRoom });
+        if (payload === lastPayload) {
+          return;
+        }
+
+        lastPayload = payload;
         controller.enqueue(
-          encoder.encode(`event: room\ndata: ${JSON.stringify({ room: nextRoom })}\n\n`),
+          encoder.encode(`event: room\ndata: ${payload}\n\n`),
         );
       };
 
       sendRoom(room);
       await registerPresence({ code, playerId, playerName });
+      const roomAfterPresence = await getRoom(code);
+      if (roomAfterPresence) {
+        sendRoom(roomAfterPresence);
+      }
 
       const unsubscribe = subscribeToRoom(code, (nextRoom) => {
         sendRoom(nextRoom);
       });
+
+      const refreshFromStorage = setInterval(async () => {
+        try {
+          const latestRoom = await getRoom(code);
+          if (latestRoom) {
+            sendRoom(latestRoom);
+          }
+        } catch {
+          // If a transient read fails, keep the stream alive and retry on the next tick.
+        }
+      }, 1000);
 
       const keepAlive = setInterval(() => {
         controller.enqueue(encoder.encode(": keep-alive\n\n"));
       }, 15000);
 
       const cleanup = async () => {
+        clearInterval(refreshFromStorage);
         clearInterval(keepAlive);
         unsubscribe();
         await unregisterPresence({ code, playerId, playerName });
