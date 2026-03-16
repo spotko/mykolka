@@ -33,6 +33,7 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
   const [joining, setJoining] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [hasTriedReconnect, setHasTriedReconnect] = useState(false);
+  const [hasTriedAutoJoin, setHasTriedAutoJoin] = useState(false);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [cardCallout, setCardCallout] = useState<string | null>(null);
   const [copiedRoomLink, setCopiedRoomLink] = useState(false);
@@ -96,6 +97,7 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
 
     void fetchRoom();
     setHasTriedReconnect(false);
+    setHasTriedAutoJoin(false);
   }, [initialJoinName, storageKey, storageNameKey]);
 
   useEffect(() => {
@@ -206,6 +208,40 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
     storageKey,
     storageNameKey,
   ]);
+
+  useEffect(() => {
+    if (
+      !room ||
+      currentPlayer ||
+      joining ||
+      reconnecting ||
+      hasTriedAutoJoin ||
+      !initialJoinName?.trim()
+    ) {
+      return;
+    }
+
+    setHasTriedAutoJoin(true);
+    void handleJoin(initialJoinName);
+  }, [
+    currentPlayer,
+    hasTriedAutoJoin,
+    initialJoinName,
+    joining,
+    reconnecting,
+    room,
+  ]);
+
+  useEffect(() => {
+    if (room?.status !== "round_end" && room?.status !== "game_over") {
+      return;
+    }
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }, [room?.status]);
 
   async function fetchRoom(showLoader = true) {
     if (showLoader) {

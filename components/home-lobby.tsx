@@ -60,9 +60,14 @@ export function HomeLobby() {
       return;
     }
 
+    const normalizedCode = roomCode.trim().toUpperCase();
+    const normalizedName = joinName.trim();
+
+    window.sessionStorage.setItem(`mykolka-player-name:${normalizedCode}`, normalizedName);
+
     startTransition(() => {
       router.push(
-        `/room/${roomCode.trim().toUpperCase()}?name=${encodeURIComponent(joinName.trim())}`,
+        `/room/${normalizedCode}?name=${encodeURIComponent(normalizedName)}`,
       );
     });
   };
