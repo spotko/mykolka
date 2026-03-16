@@ -9,6 +9,7 @@ import {
 } from "@/lib/game/round";
 import type { GameRoom, Player } from "@/lib/game/types";
 import { getRoomRepository } from "@/server/room-repository";
+import { recordPlayerLoss } from "@/server/stats-store";
 
 const roomRepository = getRoomRepository();
 
@@ -158,6 +159,7 @@ export async function revealForPlayer({ code, playerId, cardId }: RevealInput) {
   const finalizedRoom = markGameOverIfNeeded(updatedRoom);
 
   await storeRoom(finalizedRoom);
+  await syncLossStats(room, finalizedRoom);
   return { room: finalizedRoom };
 }
 
@@ -174,16 +176,17 @@ export async function continueAfterPause(code: string) {
   const updatedRoom = advanceAfterRoundPause(room);
   const finalizedRoom = markGameOverIfNeeded(updatedRoom);
   await storeRoom(finalizedRoom);
+  await syncLossStats(room, finalizedRoom);
   return { room: finalizedRoom };
 }
 
-export async function resetRoom(code: string) {
+export async function resetRoom(code: string, penaltyLimit?: number) {
   const room = await getRoom(code);
   if (!room) {
     return { error: "Кімнату не знайдено." as const };
   }
 
-  const updatedRoom = resetRoomForNewGame(room);
+  const updatedRoom = resetRoomForNewGame(room, penaltyLimit);
   await storeRoom(updatedRoom);
   return { room: updatedRoom };
 }
@@ -337,7 +340,7 @@ function syncRoundTimer(room: GameRoom) {
     const updatedRoom = advanceAfterRoundPause(latestRoom);
     const finalizedRoom = markGameOverIfNeeded(updatedRoom);
     await storeRoom(finalizedRoom);
-  }, 2500);
+  }, 3000);
 
   roundTimers.set(room.id, nextRoundTimer);
 }
@@ -354,4 +357,20 @@ function appendActivity(room: GameRoom, message: string): GameRoom {
       ...room.activityLog,
     ].slice(0, 8),
   };
+}
+
+async function syncLossStats(previousRoom: GameRoom, nextRoom: GameRoom) {
+  if (previousRoom.status === "game_over" || nextRoom.status !== "game_over") {
+    return;
+  }
+
+  const losingPlayer = nextRoom.players.find(
+    (player) => player.penaltyPoints >= nextRoom.penaltyLimit,
+  );
+
+  if (!losingPlayer) {
+    return;
+  }
+
+  await recordPlayerLoss(losingPlayer.name);
 }

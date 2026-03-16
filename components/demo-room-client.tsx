@@ -2,14 +2,17 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { CardCallout } from "@/components/card-callout";
 import { CardPreview } from "@/components/card-preview";
 import { DiscardPile } from "@/components/discard-pile";
 import { PlayersPanel } from "@/components/players-panel";
+import { RoundRevealOverlay } from "@/components/round-reveal-overlay";
 import { RoundHistory } from "@/components/round-history";
 import { RoundNotice } from "@/components/round-notice";
 import { resetRoomForNewGame } from "@/lib/game/setup";
 import {
   advanceAfterRoundPause,
+  getCardCatchphrase,
   getCardSuitSymbol,
   getCurrentPhaseLabel,
   revealCardForActivePlayer,
@@ -23,6 +26,8 @@ type DemoRoomClientProps = {
 export function DemoRoomClient({ initialRoom }: DemoRoomClientProps) {
   const [room, setRoom] = useState(initialRoom);
   const [pauseSecondsLeft, setPauseSecondsLeft] = useState<number | null>(null);
+  const [cardCallout, setCardCallout] = useState<string | null>(null);
+  const [lastAnnouncedRevealId, setLastAnnouncedRevealId] = useState<string | null>(null);
 
   const activePlayer = room.players.find((player) => player.id === room.activePlayerId) ?? null;
   const activePlayerName = activePlayer?.name ?? "Немає активного гравця";
@@ -45,7 +50,7 @@ export function DemoRoomClient({ initialRoom }: DemoRoomClientProps) {
       return;
     }
 
-    setPauseSecondsLeft(2.5);
+    setPauseSecondsLeft(3);
 
     const tickInterval = window.setInterval(() => {
       setPauseSecondsLeft((currentValue) => {
@@ -60,13 +65,49 @@ export function DemoRoomClient({ initialRoom }: DemoRoomClientProps) {
 
     const roundTimeout = window.setTimeout(() => {
       setRoom((currentRoom) => advanceAfterRoundPause(currentRoom));
-    }, 2500);
+    }, 3000);
 
     return () => {
       window.clearInterval(tickInterval);
       window.clearTimeout(roundTimeout);
     };
   }, [room.status]);
+
+  useEffect(() => {
+    const latestReveal =
+      room.battleReveals[room.battleReveals.length - 1] ??
+      room.currentRoundReveals[room.currentRoundReveals.length - 1];
+
+    if (!latestReveal || latestReveal.cardId === lastAnnouncedRevealId) {
+      return;
+    }
+
+    const playerName =
+      room.players.find((player) => player.id === latestReveal.playerId)?.name ?? null;
+    const catchphrase = getCardCatchphrase(latestReveal.rank);
+
+    if (!playerName || !catchphrase) {
+      setLastAnnouncedRevealId(latestReveal.cardId);
+      return;
+    }
+
+    setLastAnnouncedRevealId(latestReveal.cardId);
+    setCardCallout(`${playerName}: «${catchphrase}»`);
+  }, [lastAnnouncedRevealId, room.battleReveals, room.currentRoundReveals, room.players]);
+
+  useEffect(() => {
+    if (!cardCallout) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCardCallout(null);
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [cardCallout]);
 
   const handleCardClick = (cardId: string) => {
     if (isGameOver || room.status === "round_end") {
@@ -116,6 +157,12 @@ export function DemoRoomClient({ initialRoom }: DemoRoomClientProps) {
 
   return (
     <>
+      <RoundRevealOverlay
+        players={room.players}
+        reveals={room.battleReveals.length > 0 ? room.battleReveals : room.currentRoundReveals}
+        visible={room.status === "round_end"}
+      />
+
       <section className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
         <PlayersPanel
           activePlayerId={room.activePlayerId}
@@ -159,9 +206,11 @@ export function DemoRoomClient({ initialRoom }: DemoRoomClientProps) {
             tone={room.status === "game_over" ? "game" : "round"}
           />
 
+          <CardCallout message={cardCallout} />
+
           <div className="mb-5 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-stone-200/85">
             {room.status === "round_end"
-              ? `Раунд завершено. Пауза 2.5 секунди перед наступним ходом${
+              ? `Раунд завершено. Пауза 3 секунди перед наступним ходом${
                   pauseSecondsLeft !== null ? ` (${pauseSecondsLeft.toFixed(1)} с)` : "."
                 }`
               : room.status === "lobby" && !canStartGame

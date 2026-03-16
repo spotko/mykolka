@@ -112,6 +112,18 @@ export function getCardSuitSymbol(suit: string) {
   return symbols[suit] ?? suit;
 }
 
+export function getCardCatchphrase(rank: string) {
+  if (rank === "A") {
+    return "Туз тузєвіч сажотрус";
+  }
+
+  if (rank === "10") {
+    return "Десятка робоча";
+  }
+
+  return null;
+}
+
 export function getCurrentPhaseLabel(room: GameRoom) {
   if (room.status === "battle") {
     return "Батл";

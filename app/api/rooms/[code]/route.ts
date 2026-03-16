@@ -32,6 +32,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     playerName?: string;
     playerId?: string;
     cardId?: string;
+    penaltyLimit?: number;
   };
 
   if (body.action === "join") {
@@ -67,7 +68,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   if (body.action === "reset") {
-    const result = await resetRoom(code);
+    const result = await resetRoom(code, body.penaltyLimit);
     if ("error" in result) {
       return NextResponse.json(result, { status: 404 });
     }

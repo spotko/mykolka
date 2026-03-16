@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { CardCallout } from "@/components/card-callout";
 import { CardPreview } from "@/components/card-preview";
 import { DiscardPile } from "@/components/discard-pile";
 import { PlayersPanel } from "@/components/players-panel";
+import { RoundRevealOverlay } from "@/components/round-reveal-overlay";
 import { RoundHistory } from "@/components/round-history";
 import { RoundNotice } from "@/components/round-notice";
-import { getCardSuitSymbol } from "@/lib/game/round";
+import { getCardCatchphrase, getCardSuitSymbol } from "@/lib/game/round";
 import type { GameRoom } from "@/lib/game/types";
 
 type OnlineRoomClientProps = {
@@ -31,6 +34,11 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
   const [reconnecting, setReconnecting] = useState(false);
   const [hasTriedReconnect, setHasTriedReconnect] = useState(false);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
+  const [cardCallout, setCardCallout] = useState<string | null>(null);
+  const [copiedRoomLink, setCopiedRoomLink] = useState(false);
+  const [isConfiguringReset, setIsConfiguringReset] = useState(false);
+  const [lastAnnouncedRevealId, setLastAnnouncedRevealId] = useState<string | null>(null);
+  const [nextPenaltyLimit, setNextPenaltyLimit] = useState(3);
   const storageKey = `mykolka-player:${code}`;
   const storageNameKey = `mykolka-player-name:${code}`;
   const currentPlayer = room?.players.find((player) => player.id === playerId) ?? null;
@@ -45,6 +53,33 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
   const canStartGame = Boolean(room && room.players.length >= 2);
   const battleMessage =
     room?.status === "battle" ? room.lastRoundSummary?.message ?? "Батл триває." : null;
+  const hasCurrentPlayerRevealed = Boolean(
+    room &&
+      currentPlayer &&
+      [...room.currentRoundReveals, ...room.battleReveals].some(
+        (reveal) => reveal.playerId === currentPlayer.id,
+      ),
+  );
+  const mobileTurnHint =
+    room?.status === "game_over"
+      ? "Партія завершена."
+      : room?.status === "round_end"
+      ? "Чекаємо наступне коло."
+      : room?.status === "battle"
+      ? currentPlayer?.id === room.activePlayerId
+        ? "Ваш хід у батлі."
+        : `Зараз хід: ${activePlayer?.name ?? "інший гравець"}`
+      : currentPlayer?.id === room?.activePlayerId
+      ? "Ваш хід."
+      : `Зараз хід: ${activePlayer?.name ?? "інший гравець"}`;
+  const shouldShowMobileTurnHint =
+    !error &&
+    !(
+      currentPlayer?.id === room?.activePlayerId &&
+      canStartGame &&
+      room?.status !== "round_end" &&
+      room?.status !== "game_over"
+    );
 
   useEffect(() => {
     const storedPlayerId = window.sessionStorage.getItem(storageKey);
@@ -62,6 +97,14 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
     void fetchRoom();
     setHasTriedReconnect(false);
   }, [initialJoinName, storageKey, storageNameKey]);
+
+  useEffect(() => {
+    if (!room) {
+      return;
+    }
+
+    setNextPenaltyLimit(room.penaltyLimit);
+  }, [room?.penaltyLimit, room]);
 
   useEffect(() => {
     const eventUrl = new URL(`/api/rooms/${code}/events`, window.location.origin);
@@ -97,6 +140,46 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
       events.close();
     };
   }, [code, playerId, playerName]);
+
+  useEffect(() => {
+    if (!room) {
+      return;
+    }
+
+    const latestReveal =
+      room.battleReveals[room.battleReveals.length - 1] ??
+      room.currentRoundReveals[room.currentRoundReveals.length - 1];
+
+    if (!latestReveal || latestReveal.cardId === lastAnnouncedRevealId) {
+      return;
+    }
+
+    const playerNameForReveal =
+      room.players.find((player) => player.id === latestReveal.playerId)?.name ?? null;
+    const catchphrase = getCardCatchphrase(latestReveal.rank);
+
+    if (!playerNameForReveal || !catchphrase) {
+      setLastAnnouncedRevealId(latestReveal.cardId);
+      return;
+    }
+
+    setLastAnnouncedRevealId(latestReveal.cardId);
+    setCardCallout(`${playerNameForReveal}: «${catchphrase}»`);
+  }, [lastAnnouncedRevealId, room]);
+
+  useEffect(() => {
+    if (!cardCallout) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCardCallout(null);
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [cardCallout]);
 
   useEffect(() => {
     if (!room || currentPlayer || joining || reconnecting || hasTriedReconnect) {
@@ -212,6 +295,20 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
       return;
     }
 
+    if (!canStartGame) {
+      setError("Для старту гри потрібно щонайменше 2 гравці.");
+      return;
+    }
+
+    if (room?.status === "round_end" || room?.status === "game_over") {
+      return;
+    }
+
+    if (currentPlayer?.id !== room?.activePlayerId) {
+      setError(hasCurrentPlayerRevealed ? "У цьому колі ви вже походили." : "Зараз не ваш хід.");
+      return;
+    }
+
     setBusyCardId(cardId);
     setError("");
 
@@ -238,7 +335,7 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
     setBusyCardId(null);
   };
 
-  const handleReset = async () => {
+  const handleReset = async (penaltyLimit = nextPenaltyLimit) => {
     const response = await fetch(`/api/rooms/${code}`, {
       method: "PATCH",
       headers: {
@@ -246,6 +343,7 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
       },
       body: JSON.stringify({
         action: "reset",
+        penaltyLimit,
       }),
     });
 
@@ -256,6 +354,7 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
     }
 
     setRoom(data.room);
+    setIsConfiguringReset(false);
   };
 
   const handleCopyRoomLink = async () => {
@@ -264,6 +363,10 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
     }
 
     await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`);
+    setCopiedRoomLink(true);
+    window.setTimeout(() => {
+      setCopiedRoomLink(false);
+    }, 1800);
   };
 
   if (loading) {
@@ -351,9 +454,14 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
           <button
             type="button"
             onClick={handleCopyRoomLink}
-            className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-4 py-2 text-sm font-medium text-emerald-50 transition-colors hover:bg-emerald-300/15"
+            className={[
+              "rounded-full px-4 py-2 text-sm font-medium transition-colors",
+              copiedRoomLink
+                ? "border border-sky-300/35 bg-sky-300/15 text-sky-50"
+                : "border border-emerald-300/25 bg-emerald-300/10 text-emerald-50 hover:bg-emerald-300/15",
+            ].join(" ")}
           >
-            Запросити за посиланням
+            {copiedRoomLink ? "Посилання скопійовано" : "Запросити за посиланням"}
           </button>
         </div>
 
@@ -384,8 +492,14 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
 
   return (
     <div className="space-y-6">
+      <RoundRevealOverlay
+        players={room.players}
+        reveals={room.battleReveals.length > 0 ? room.battleReveals : room.currentRoundReveals}
+        visible={room.status === "round_end"}
+      />
+
       <section className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-black/20 p-6 shadow-glow backdrop-blur lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-4">
+        <Link href="/" className="flex items-center gap-4 transition-opacity hover:opacity-90">
           <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border border-white/10 bg-black/20">
             <Image
               src="/assets/logo-mykolka.png"
@@ -401,16 +515,21 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
             </p>
             <h1 className="mt-2 font-display text-3xl text-stone-50">Миколкина гра</h1>
           </div>
-        </div>
+        </Link>
 
         <div className="flex flex-wrap items-center gap-3">
           {room.status === "lobby" ? (
             <button
               type="button"
               onClick={handleCopyRoomLink}
-              className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-4 py-2 text-sm font-medium text-emerald-50 transition-colors hover:bg-emerald-300/15"
+              className={[
+                "rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                copiedRoomLink
+                  ? "border border-sky-300/35 bg-sky-300/15 text-sky-50"
+                  : "border border-emerald-300/25 bg-emerald-300/10 text-emerald-50 hover:bg-emerald-300/15",
+              ].join(" ")}
             >
-              Запросити за посиланням
+              {copiedRoomLink ? "Посилання скопійовано" : "Запросити за посиланням"}
             </button>
           ) : null}
         </div>
@@ -427,7 +546,13 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
 
         <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-glow backdrop-blur">
           <RoundNotice
-            actionLabel={room.status === "game_over" ? "Нова партія" : undefined}
+            actionLabel={
+              room.status === "game_over"
+                ? isConfiguringReset
+                  ? "Почати партію"
+                  : "Нова партія"
+                : undefined
+            }
             loserName={room.status === "game_over" ? null : roundLoser?.name ?? null}
             message={
               room.status === "game_over"
@@ -436,10 +561,49 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
                 ? null
                 : room.lastRoundSummary?.message ?? null
             }
-            onAction={room.status === "game_over" ? handleReset : null}
+            onAction={
+              room.status === "game_over"
+                ? () => {
+                    if (!isConfiguringReset) {
+                      setIsConfiguringReset(true);
+                      return;
+                    }
+
+                    void handleReset(nextPenaltyLimit);
+                  }
+                : null
+            }
             title={room.status === "game_over" ? "Підсумок гри" : undefined}
             tone={room.status === "game_over" ? "game" : "round"}
           />
+
+          <CardCallout message={cardCallout} />
+
+          {room.status === "game_over" && isConfiguringReset ? (
+            <div className="mb-5 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm text-stone-200">
+              <label className="block">
+                <span className="mb-2 block text-sm text-stone-200">До скількох граємо?</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={nextPenaltyLimit}
+                  onChange={(event) => setNextPenaltyLimit(Number(event.target.value))}
+                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-stone-50 outline-none transition-colors focus:border-amber-300/40"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsConfiguringReset(false);
+                  setNextPenaltyLimit(room.penaltyLimit);
+                }}
+                className="mt-3 text-sm text-stone-400 transition-colors hover:text-stone-200"
+              >
+                Залишити як було: {room.penaltyLimit}
+              </button>
+            </div>
+          ) : null}
 
           {error ? (
             <div className="mb-5 rounded-2xl border border-rose-300/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
@@ -447,16 +611,17 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
             </div>
           ) : null}
 
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          {shouldShowMobileTurnHint ? (
+            <div className="mb-4 rounded-full border border-white/10 bg-black/20 px-4 py-2 text-center text-sm text-stone-200 sm:hidden">
+              {mobileTurnHint}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-3 justify-items-center gap-3 sm:grid-cols-4 lg:grid-cols-6">
             {room.tableCards.map((card) => {
               const selectedBy = card.revealedByPlayerId
                 ? room.players.find((player) => player.id === card.revealedByPlayerId)?.name ?? null
                 : null;
-              const canPlay =
-                currentPlayer?.id === room.activePlayerId &&
-                canStartGame &&
-                room.status !== "round_end" &&
-                room.status !== "game_over";
 
               return (
                 <CardPreview
@@ -464,7 +629,12 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
                   label={card.rank}
                   suit={getCardSuitSymbol(card.suit)}
                   revealed={Boolean(card.revealedByPlayerId)}
-                  disabled={Boolean(card.revealedByPlayerId) || !canPlay || busyCardId === card.id}
+                  disabled={
+                    Boolean(card.revealedByPlayerId) ||
+                    busyCardId === card.id ||
+                    room.status === "round_end" ||
+                    room.status === "game_over"
+                  }
                   onClick={() => handleReveal(card.id)}
                   selectedBy={selectedBy}
                 />

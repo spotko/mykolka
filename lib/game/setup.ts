@@ -71,7 +71,7 @@ export function createRoomSnapshot(params: {
   };
 }
 
-export function resetRoomForNewGame(room: GameRoom): GameRoom {
+export function resetRoomForNewGame(room: GameRoom, penaltyLimit = room.penaltyLimit): GameRoom {
   const resetPlayers = room.players.map((player) => ({
     ...player,
     penaltyPoints: 0,
@@ -81,7 +81,7 @@ export function resetRoomForNewGame(room: GameRoom): GameRoom {
   return {
     id: room.id,
     status: "lobby",
-    penaltyLimit: room.penaltyLimit,
+    penaltyLimit,
     players: resetPlayers,
     activePlayerId: firstPlayer?.id ?? null,
     roundStarterId: firstPlayer?.id ?? null,

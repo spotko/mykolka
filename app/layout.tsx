@@ -22,6 +22,12 @@ export default function RootLayout({
             <div className="flex items-center justify-center gap-3">
               <span>Миколкина гра · {APP_VERSION_LABEL}</span>
               <Link
+                href="/stats"
+                className="text-stone-500 transition-colors hover:text-stone-300"
+              >
+                stats
+              </Link>
+              <Link
                 href="/changelog"
                 className="text-stone-500 transition-colors hover:text-stone-300"
               >
