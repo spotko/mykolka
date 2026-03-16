@@ -85,8 +85,12 @@ export function OnlineRoomClient({ code, initialJoinName }: OnlineRoomClientProp
       }
     });
 
+    events.onopen = () => {
+      setError("");
+    };
+
     events.onerror = () => {
-      events.close();
+      void fetchRoom(false);
     };
 
     return () => {
